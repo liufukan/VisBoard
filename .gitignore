@@ -1,0 +1,24 @@
+# ---- Dependencies ----
+node_modules/
+
+# NOTE: config.json ships with EMPTY keys as a template.
+# After filling in real keys, do NOT commit/push config.json (would leak secrets).
+
+# ---- Personal knowledge base & uploaded materials ----
+kb/*
+!kb/.gitkeep
+uploads/*
+!uploads/.gitkeep
+subjects.json
+
+# ---- Dev scratch / local test fixtures ----
+test/
+
+# ---- Logs / OS / editor ----
+*.log
+npm-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
