@@ -43,6 +43,8 @@ const upload = multer({
     filename: (req, file, cb) => cb(null, crypto.randomUUID() + path.extname(file.originalname).toLowerCase()),
   }),
   limits: { fileSize: 50 * 1024 * 1024 },
+  // busboy defaults to latin1; decode multipart filenames/fields as UTF-8 so Chinese names survive.
+  defParamCharset: 'utf8',
 });
 
 app.post('/api/upload', upload.array('files'), async (req, res) => {
