@@ -441,9 +441,29 @@ input::placeholder { color: var(--faint); }
 .wb-text li { font-size: 14.5px; line-height: 1.75; margin: 3px 0; }
 .wb-text strong { color: #0b3d5c; }
 .wb-text code { background: #eef2f7; padding: 1px 6px; border-radius: 5px; font-size: 13px; }
+.wb-text pre, .bubble.md pre, .rv-notes-body.md pre, .rv-reteach-body.md pre {
+  background: #10151d; color: #d7e3f4; border: 1px solid rgba(120, 135, 160, .25);
+  padding: 10px 12px; border-radius: 8px; overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12.5px; line-height: 1.6; margin: 8px 0;
+}
+.wb-text pre code, .bubble.md pre code, .rv-notes-body.md pre code, .rv-reteach-body.md pre code {
+  background: transparent; padding: 0; border-radius: 0; font-size: inherit; color: inherit;
+}
+.katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
+.katex { font-size: 1.05em; }
 .wb-figure { border-top: 4px solid var(--amber); padding: 14px; }
 .wb-figure .fig-frame { background: #fff; border-radius: 8px; display: grid; place-items: center; }
 .wb-figure svg { max-width: 100%; height: auto; display: block; }
+.wb-figure img { max-width: 100%; height: auto; display: block; }
+.wb-figure .fig-loading { color: #64748b; font-size: 13px; display: inline-block; padding: 18px 0; }
+.wb-figure .fig-error { color: #b91c1c; font-size: 13px; display: block; margin-bottom: 6px; }
+.wb-figure pre {
+  background: #10151d; color: #d7e3f4; border: 1px solid rgba(120, 135, 160, .25);
+  padding: 10px 12px; border-radius: 8px; overflow-x: auto; width: 100%; text-align: left;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; line-height: 1.6; margin: 8px 0;
+}
+.wb-figure pre code { background: transparent; padding: 0; border-radius: 0; font-size: inherit; color: inherit; }
 .wb-figure .cap { margin: 10px 2px 0; font-size: 12.5px; color: #64748b; text-align: center; }
 .wb-title { background: transparent; box-shadow: none; border: 0; padding: 0; }
 .wb-title h2 { margin: 0; font-size: 30px; font-weight: 800; color: #16324f; letter-spacing: .5px; }

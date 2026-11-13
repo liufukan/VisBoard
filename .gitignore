@@ -1,8 +1,8 @@
 # ---- Dependencies ----
 node_modules/
 
-# NOTE: config.json ships with EMPTY keys as a template.
-# After filling in real keys, do NOT commit/push config.json (would leak secrets).
+# ---- Local config (holds YOUR API keys; auto-created on first run, never committed) ----
+config.json
 
 # ---- Personal knowledge base & uploaded materials ----
 kb/*
@@ -13,6 +13,7 @@ subjects.json
 
 # ---- Dev scratch / local test fixtures ----
 test/
+ocr-data/
 
 # ---- Logs / OS / editor ----
 *.log

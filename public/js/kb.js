@@ -1,6 +1,6 @@
 import { $, esc, getJSON, postJSON, delJSON, toast, fmtDate, refreshConn } from './util.js';
 
-const ACCEPT = '.txt,.md,.pdf,.docx,.pptx';
+const ACCEPT = '.txt,.md,.pdf,.docx,.pptx,.png,.jpg,.jpeg';
 
 export function mount(view) {
   view.innerHTML = `
@@ -20,7 +20,7 @@ export function mount(view) {
     <div class="kb-layout">
       <div class="card">
         <h2>上传资料</h2>
-        <p class="sub">支持 PDF / txt / md / docx / pptx，扫描版 PDF 暂不支持。</p>
+        <p class="sub">支持 PDF / txt / md / docx / pptx / 图片；扫描版 PDF 与图片上传后点「OCR 识别」回填文字。</p>
         <label class="subj-pick">上传到科目<select id="uploadSubject" class="subj-select"></select></label>
         <div class="dropzone" id="dropzone">
           <div class="dz-ic"><svg viewBox="0 0 24 24"><path d="M12 16V5m0 0l-4 4m4-4l4 4M5 19h14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
@@ -99,9 +99,11 @@ export function mount(view) {
         <div class="doc-ic ${esc(d.kind)}">${esc(d.kind)}</div>
         <div class="doc-info">
           <div class="nm">${esc(d.name)}</div>
-          <div class="ds">${d.chars} 字 · ${d.pages} 页 · ${d.chunks} 块 · ${fmtDate(d.createdAt)}</div>
+          <div class="ds">${d.chars} 字 · ${d.pages} 页 · ${d.chunks} 块 · ${d.imageCount || 0} 图 · ${fmtDate(d.createdAt)}</div>
         </div>
         <select class="subj-select doc-subj" data-id="${esc(d.id)}" title="改归属科目">${subjectOptions(d.subject, false)}</select>
+        <button class="btn ghost sm doc-img" data-id="${esc(d.id)}">补提取图片</button>
+        ${d.scanned ? `<button class="btn ghost sm doc-ocr" data-id="${esc(d.id)}" title="本地 OCR 识别扫描文字，较慢">OCR 识别</button>` : ''}
         <button class="btn ghost sm doc-del" data-id="${esc(d.id)}">删除</button>
       </div>`).join('');
   }
@@ -168,6 +170,26 @@ export function mount(view) {
     } catch (err) { toast(err.message, 'err'); load(); }
   });
   $('#docList').addEventListener('click', async e => {
+    const imgBtn = e.target.closest('.doc-img');
+    if (imgBtn) {
+      imgBtn.disabled = true;
+      try {
+        const r = await postJSON('/api/kb/' + encodeURIComponent(imgBtn.dataset.id) + '/images', {});
+        toast('已提取 ' + (r.count || 0) + ' 张图片', 'ok');
+        load();
+      } catch (err) { toast(err.message, 'err'); imgBtn.disabled = false; }
+      return;
+    }
+    const ocrBtn = e.target.closest('.doc-ocr');
+    if (ocrBtn) {
+      ocrBtn.disabled = true; const old = ocrBtn.textContent; ocrBtn.textContent = '识别中…';
+      try {
+        const r = await postJSON('/api/kb/' + encodeURIComponent(ocrBtn.dataset.id) + '/ocr', {});
+        toast(r.ocrPages ? ('识别 ' + r.ocrPages + ' 页（' + r.chars + ' 字）' + (r.truncated ? '，已识别前 50 页' : '')) : '识别完成但结果为空（可能图质差）', r.ocrPages ? 'ok' : 'warn');
+        load();
+      } catch (err) { toast(err.message, 'err'); ocrBtn.disabled = false; ocrBtn.textContent = old; }
+      return;
+    }
     const btn = e.target.closest('.doc-del');
     if (!btn) return;
     const doc = docs.find(d => d.id === btn.dataset.id);

@@ -1,4 +1,4 @@
-import { $, esc, toast, parseBlocks, mdToHtml, blockHtml, webCitesHTML } from './util.js';
+import { $, esc, toast, parseBlocks, mdToHtml, blockHtml, webCitesHTML, resolveCircuitFrames, imageFigureHTML } from './util.js';
 import { subjectSelectHTML, initSubjectSelect, getSubject } from './subject.js';
 import { webToggleHTML, initWebToggle, getWeb } from './web.js';
 import { saveBoard, exportLessonHTML, getPlan } from './lesson.js';
@@ -145,6 +145,7 @@ export function mount(view) {
   let controller = null, renderPending = false, scenePending = false, lastCount = 0, dialogSeq = 0;
   let selectedCard = null;
   let lastCites = [], lastWebCites = [];
+  let lessonImages = [];
   leaveGuard = () => streaming || dialogs.some(d => d.streaming);
 
   function snapshotDialogs() {
@@ -152,7 +153,7 @@ export function mount(view) {
   }
   function persistBoard() {
     if (!topic || !full.trim()) return;
-    saveBoard(topic, { full, citations: lastCites, webCitations: lastWebCites, dialogs: snapshotDialogs() });
+    saveBoard(topic, { full, citations: lastCites, webCitations: lastWebCites, dialogs: snapshotDialogs(), images: lessonImages });
   }
 
   function applyView(smooth) {
@@ -260,6 +261,7 @@ export function mount(view) {
     return lines.join('\n');
   }
 
+  const circuitCache = {};
   function renderBoard(text) {
     const parsed = parseBlocks(cleanFull(text));
     if (parsed.length && parsed[0].type === 'title') parsed.shift();
@@ -268,14 +270,39 @@ export function mount(view) {
       let card = cards[i];
       if (!card) {
         card = document.createElement('div');
-        card.className = 'wb-el ' + (b.type === 'title' ? (b.isTopic ? 'wb-title wb-topic' : 'wb-title') : b.type === 'figure' ? 'wb-card wb-figure' : 'wb-card wb-text');
+        card.className = 'wb-el ' + (b.type === 'title' ? (b.isTopic ? 'wb-title wb-topic' : 'wb-title') : (b.type === 'figure' || b.type === 'circuit' || b.type === 'func') ? 'wb-card wb-figure' : 'wb-card wb-text');
         card.dataset.type = b.type;
         canvas.appendChild(card); cards[i] = card;
       }
-      const html = blockHtml(b);
+      const html = blockHtml(b, circuitCache);
       if (card.dataset.sig !== html) { card.innerHTML = html; card.dataset.sig = html; }
     });
-    while (cards.length > blocks.length) cards.pop().remove();
+    const total = blocks.length + lessonImages.length;
+    lessonImages.forEach((img, k) => {
+      const i = blocks.length + k;
+      let card = cards[i];
+      if (!card) {
+        card = document.createElement('div');
+        canvas.appendChild(card); cards[i] = card;
+      }
+      card.className = 'wb-el wb-card wb-figure';
+      card.dataset.type = 'image';
+      const html = imageFigureHTML(img, img.url);
+      if (card.dataset.sig !== html) {
+        card.innerHTML = html; card.dataset.sig = html;
+        const im = card.querySelector('img');
+        if (im) {
+          im.addEventListener('error', () => {
+            const ph = document.createElement('span');
+            ph.className = 'fig-error'; ph.textContent = '资料图片加载失败';
+            im.replaceWith(ph); layout();
+          });
+          if (im.decode) im.decode().then(() => layout()).catch(() => {});
+        }
+      }
+    });
+    while (cards.length > total) cards.pop().remove();
+    resolveCircuitFrames(canvas, circuitCache).then(() => layout());
     if (dialogs.length) {
       const keep = dialogs.filter(d => cards.includes(d.source));
       if (keep.length !== dialogs.length) {
@@ -449,7 +476,7 @@ export function mount(view) {
     if (controller) controller.abort();
     clearDialogs(); closeMenu();
     topic = t; full = ''; cards.forEach(c => c.remove()); cards = []; lastCount = 0;
-    lastCites = []; lastWebCites = [];
+    lastCites = []; lastWebCites = []; lessonImages = [];
     $('#boardCites').innerHTML = ''; emptyEl.style.display = 'none'; reviewBtn.hidden = true; exportBtn.hidden = true;
     streaming = true; startBtn.disabled = true; setStatus('连接中…', true);
     vw = { x: 40, y: 30, scale: 0.85 }; applyView(false);
@@ -462,6 +489,7 @@ export function mount(view) {
       else if (ev.type === 'empty') { streaming = false; setStatus(ev.message, false); showEmpty('知识库没有相关内容', ev.message, 'EMPTY_KB'); }
       else if (ev.type === 'done') {
         if (ev.full) full = ev.full;
+        lessonImages = ev.images || [];
         streaming = false; renderBoard(full);
         setStatus('讲解完成 ✓', false);
         lastCites = ev.citations || []; lastWebCites = ev.webCitations || [];
@@ -504,8 +532,8 @@ export function mount(view) {
   $('#zoomFit').addEventListener('click', () => { closeMenu(); fitView(true); });
   $('#zoomReset').addEventListener('click', () => { closeMenu(); vw = { x: 40, y: 30, scale: 0.85 }; applyView(true); });
   $('#followBtn').addEventListener('click', () => { autoFollow = !autoFollow; $('#followBtn').classList.toggle('on', autoFollow); $('#followBtn span').textContent = autoFollow ? '自动跟随' : '自由浏览'; });
-  $('#clearBtn').addEventListener('click', () => { if (controller) controller.abort(); streaming = false; full = ''; topic = ''; lessonMaxY = 0; lastCites = []; lastWebCites = []; cards.forEach(c => c.remove()); cards = []; clearDialogs(); closeMenu(); lastCount = 0; updateScene(); $('#boardCites').innerHTML = ''; reviewBtn.hidden = true; exportBtn.hidden = true; showEmpty('一块等待开课的白板', '输入课题并点击「开始讲解」，AI 会在这里逐个插入文字框和示意图', null); setStatus('', false); startBtn.disabled = false; });
-  exportBtn.addEventListener('click', () => { if (exportLessonHTML(topic)) toast('已导出本课 HTML（含白板/追问/笔记）', 'ok'); else toast('没有可导出的本课内容', 'warn'); });
+  $('#clearBtn').addEventListener('click', () => { if (controller) controller.abort(); streaming = false; full = ''; topic = ''; lessonMaxY = 0; lastCites = []; lastWebCites = []; lessonImages = []; cards.forEach(c => c.remove()); cards = []; clearDialogs(); closeMenu(); lastCount = 0; updateScene(); $('#boardCites').innerHTML = ''; reviewBtn.hidden = true; exportBtn.hidden = true; showEmpty('一块等待开课的白板', '输入课题并点击「开始讲解」，AI 会在这里逐个插入文字框和示意图', null); setStatus('', false); startBtn.disabled = false; });
+  exportBtn.addEventListener('click', async () => { if (await exportLessonHTML(topic)) toast('已导出本课 HTML（含白板/追问/笔记）', 'ok'); else toast('没有可导出的本课内容', 'warn'); });
   startBtn.addEventListener('click', start);
   input.addEventListener('keydown', e => { if (e.key === 'Enter') start(); });
 

@@ -62,18 +62,15 @@ cd VisBoard
 # 2. 安装依赖
 npm install
 
-# 3. 打开 config.json，填入你的 apiKey（见下方「配置说明」）
-#    仓库已自带空密钥的 config.json，直接编辑即可，无需新建
-
-# 4. 启动
+# 3. 启动（首次运行会自动生成空密钥的 config.json）
 npm start
+
+# 4. 打开 config.json 填入你的 apiKey（见下方「配置说明」），保存后重启 npm start
 ```
 
 启动后浏览器打开 **http://localhost:3000** 即可使用。
 
-> 仓库自带一份**空密钥**的 `config.json`，填好 Key 即可运行；`kb/` 与 `uploads/` 目录已用占位文件保留，可直接上传资料。
->
-> 安全提示：填入真实 Key 后，请**不要**把 `config.json` 的改动提交/推送到公开仓库，以免泄露密钥。
+> `config.json` 已 **gitignore**：首次 `npm start` 会自动生成一份空密钥模板，你填入的 Key 只存本机、不会进入 git。`kb/` 与 `uploads/` 目录已用占位文件保留，可直接上传资料。
 
 ---
 
@@ -134,7 +131,7 @@ npm start
 ```
 VisBoard/
 ├─ server.js            后端：静态托管 + 上传解析 + 知识库 + 检索 + LLM/SSE 路由
-├─ config.json          配置（仓库自带空密钥模板，填入你的 Key）
+├─ config.json          配置（gitignore；首次启动自动生成，填入你的 Key）
 ├─ package.json
 ├─ lib/
 │  ├─ parse.js          文档解析（txt/md/pdf/docx/pptx）
@@ -158,8 +155,7 @@ VisBoard/
 ## 隐私与安全
 
 - **API Key 只存后端 `config.json`**，永远不会发送到前端。
-- 仓库自带的 `config.json` 是**空密钥模板**，不含任何真实密钥；你填入的 Key 只存本机。
-- **填入真实 Key 后，请勿提交/推送 `config.json` 的改动**，以免密钥泄露。
+- `config.json` 已 **gitignore**，首次启动自动生成空模板；你填入的 Key 只存本机，正常提交/推送不会带上它。
 - **知识库与上传文件只存本机**（`kb/`、`uploads/`），不上传任何云端。
 - 联网拓展为可选；关闭时除调用你自己的大模型接口外，完全本地运行。
 

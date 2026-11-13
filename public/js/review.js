@@ -1,4 +1,4 @@
-import { $, esc, postJSON, toast, mdToHtml, readSSE, guideLink, webCitesHTML } from './util.js';
+import { $, esc, postJSON, toast, mdToHtml, inlineMd, readSSE, guideLink, webCitesHTML } from './util.js';
 import { subjectSelectHTML, initSubjectSelect, getSubject } from './subject.js';
 import { webToggleHTML, initWebToggle, getWeb } from './web.js';
 import { saveNotes, exportLessonHTML, getLesson } from './lesson.js';
@@ -188,7 +188,7 @@ export function mount(view) {
         if (correct.includes(j)) cls += ' correct';
         else if (picked) cls += ' wrong';
       }
-      h += '<button class="' + cls + '" data-q="' + i + '" data-opt="' + j + '" ' + (graded ? 'disabled' : '') + '><span class="rv-opt-key">' + OPT_KEY[j] + '</span><span class="rv-opt-text">' + esc(opt) + '</span></button>';
+      h += '<button class="' + cls + '" data-q="' + i + '" data-opt="' + j + '" ' + (graded ? 'disabled' : '') + '><span class="rv-opt-key">' + OPT_KEY[j] + '</span><span class="rv-opt-text">' + inlineMd(opt) + '</span></button>';
     });
     return h + '</div>';
   }
@@ -213,7 +213,7 @@ export function mount(view) {
   }
   function shortHTML(q, i) {
     let h = '<textarea class="rv-short" data-q="' + i + '" rows="3" placeholder="用自己的话作答" ' + (graded ? 'disabled' : '') + '>' + esc(answers[i]) + '</textarea>';
-    if (graded) h += '<div class="rv-anskey"><b>参考答案：</b>' + esc(q.reference) + '</div>';
+    if (graded) h += '<div class="rv-anskey"><b>参考答案：</b>' + inlineMd(q.reference) + '</div>';
     return h;
   }
   function answerAreaHTML(q, i) {
@@ -235,10 +235,10 @@ export function mount(view) {
     questions.forEach((q, i) => {
       const pass = graded && results[i] && results[i].pass;
       html += `<div class="rv-q" data-q="${i}">
-        <div class="rv-q-head"><span class="rv-q-num">${i + 1}</span><span class="rv-q-type">${TYPE_LABEL[q.type] || '题目'}</span><span class="rv-q-text">${esc(q.question)}</span>${graded ? (pass ? '<span class="rv-q-badge ok">✓ 答对</span>' : '<span class="rv-q-badge no">✗ 答错</span>') : ''}</div>
+        <div class="rv-q-head"><span class="rv-q-num">${i + 1}</span><span class="rv-q-type">${TYPE_LABEL[q.type] || '题目'}</span><span class="rv-q-text">${inlineMd(q.question)}</span>${graded ? (pass ? '<span class="rv-q-badge ok">✓ 答对</span>' : '<span class="rv-q-badge no">✗ 答错</span>') : ''}</div>
         ${answerAreaHTML(q, i)}`;
       if (graded) {
-        html += `<div class="rv-feedback"><b>解析：</b>${esc(q.explain || '依据知识库资料作答。')}</div>`;
+        html += `<div class="rv-feedback"><b>解析：</b>${inlineMd(q.explain || '依据知识库资料作答。')}</div>`;
         if (q.type === 'short' && results[i] && results[i].comment) html += `<div class="rv-comment"><b>点评：</b>${esc(results[i].comment)}</div>`;
         if (!pass) {
           html += `<div class="rv-reteach"><button class="btn ghost sm rv-reteach-btn" data-q="${i}">↻ 再讲一遍这个知识点</button><div class="rv-reteach-body md" data-reteach="${i}"></div></div>`;
@@ -365,7 +365,7 @@ export function mount(view) {
   genQuizBtn.addEventListener('click', genQuiz);
   copyBtn.addEventListener('click', copyNotes);
   exportBtn.addEventListener('click', exportNotes);
-  exportLessonBtn.addEventListener('click', () => { const t = topicInput.value.trim(); if (exportLessonHTML(t)) toast('已导出本课 HTML（含白板/追问/笔记）', 'ok'); else toast('没有可导出的本课内容，先讲解或生成笔记', 'warn'); });
+  exportLessonBtn.addEventListener('click', async () => { const t = topicInput.value.trim(); if (await exportLessonHTML(t)) toast('已导出本课 HTML（含白板/追问/笔记）', 'ok'); else toast('没有可导出的本课内容，先讲解或生成笔记', 'warn'); });
   topicInput.addEventListener('input', updateExportLessonBtn);
   topicInput.addEventListener('keydown', e => { if (e.key === 'Enter') genNotes(); });
   quizBody.addEventListener('click', e => {

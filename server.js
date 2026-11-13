@@ -10,16 +10,32 @@ const { prepareLesson, streamLesson, streamAnswer } = require('./lib/teach');
 const { streamNotes, generateQuiz, gradeShortAnswers } = require('./lib/review');
 const llm = require('./lib/llm');
 const search = require('./lib/search');
+const latex = require('./lib/latex');
+const ocr = require('./lib/ocr');
 
-const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+const CONFIG_PATH = path.join(__dirname, 'config.json');
+// config.json is gitignored (local keys); create an empty template on first run so a fresh clone boots.
+if (!fs.existsSync(CONFIG_PATH)) {
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify({
+    port: 3000,
+    baseUrl: 'https://api.deepseek.com/v1',
+    apiKey: '',
+    model: 'deepseek-chat',
+    searchApiKey: '',
+    searchProvider: 'deepseek',
+  }, null, 2));
+}
+const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
 
 const app = express();
 app.use(express.json({ limit: '20mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/vendor/katex', express.static(path.join(__dirname, 'node_modules', 'katex', 'dist')));
+app.use('/kb-images', express.static(path.join(__dirname, 'kb', 'images')));
 
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
   const cfg = llm.getConfig();
-  res.json({ ok: true, hasKey: Boolean(cfg.apiKey), hasSearchKey: search.hasSearchKey(), model: cfg.model });
+  res.json({ ok: true, hasKey: Boolean(cfg.apiKey), hasSearchKey: search.hasSearchKey(), hasLatex: Boolean(await latex.detect()), model: cfg.model });
 });
 
 app.get('/api/config', (req, res) => {
@@ -55,7 +71,7 @@ app.post('/api/upload', upload.array('files'), async (req, res) => {
     const id = path.basename(f.filename, ext);
     try {
       const parsed = await extract(f.path);
-      const doc = kb.addDoc({ id, name: f.originalname, kind: parsed.kind, pages: parsed.pages, subject });
+      const doc = kb.addDoc({ id, name: f.originalname, kind: parsed.kind, pages: parsed.pages, subject, images: parsed.images, scanned: parsed.scanned });
       results.push({
         id, name: f.originalname, kind: parsed.kind, chars: doc.chars, pages: doc.pages, chunks: doc.chunks.length,
         preview: parsed.pages.map(p => p.text).join('\n').slice(0, 200),
@@ -76,6 +92,49 @@ app.delete('/api/kb/:id', (req, res) => {
 app.post('/api/kb/:id/subject', (req, res) => {
   const subject = (req.body && req.body.subject) || null;
   res.json({ ok: kb.setDocSubject(req.params.id, subject) });
+});
+
+app.post('/api/kb/:id/images', async (req, res) => {
+  const id = req.params.id;
+  if (!/^[a-zA-Z0-9-]+$/.test(id)) return res.status(400).json({ error: '无效的文档 ID' });
+  if (!kb.getDoc(id)) return res.status(404).json({ error: '文档不存在' });
+  const upDir = path.join(__dirname, 'uploads');
+  let src = null;
+  if (fs.existsSync(upDir)) {
+    const match = fs.readdirSync(upDir).find(f => f.startsWith(id + '.') && !f.endsWith('.json'));
+    if (match) src = path.join(upDir, match);
+  }
+  if (!src) return res.status(400).json({ error: '找不到原始上传文件，无法补提取图片' });
+  try {
+    const parsed = await extract(src);
+    const ok = kb.setDocImages(id, parsed.images || []);
+    const d = kb.getDoc(id);
+    res.json({ ok, count: (d.images || []).length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/kb/:id/ocr', async (req, res) => {
+  const id = req.params.id;
+  if (!/^[a-zA-Z0-9-]+$/.test(id)) return res.status(400).json({ error: '无效的文档 ID' });
+  if (!kb.getDoc(id)) return res.status(404).json({ error: '文档不存在' });
+  const upDir = path.join(__dirname, 'uploads');
+  let src = null;
+  if (fs.existsSync(upDir)) {
+    const match = fs.readdirSync(upDir).find(f => f.startsWith(id + '.') && !f.endsWith('.json'));
+    if (match) src = path.join(upDir, match);
+  }
+  if (!src) return res.status(400).json({ error: '找不到原始上传文件，无法 OCR' });
+  try {
+    const parsed = await extract(src);
+    if (parsed.kind !== 'pdf' && parsed.kind !== 'image') return res.status(400).json({ error: '该文档无需 OCR' });
+    const r = await ocr.ocrDoc(parsed);
+    const ok = kb.setDocText(id, r.pages, parsed.images);
+    res.json({ ok, ocrPages: r.ocrPages, chars: r.chars, truncated: r.truncated });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/api/subjects', (req, res) => res.json({ subjects: kb.listSubjects() }));
@@ -153,7 +212,7 @@ app.post('/api/teach/stream', async (req, res) => {
       onToken: text => send('token', { text }),
     });
     if (result.empty) send('empty', { message: result.message });
-    else send('done', { citations: result.citations, retrieved: result.retrieved, full: result.full, webCitations: result.webCitations || [] });
+    else send('done', { citations: result.citations, retrieved: result.retrieved, full: result.full, webCitations: result.webCitations || [], images: result.images || [] });
   } catch (e) {
     send('error', { message: e.message, code: e.code });
   }
@@ -240,6 +299,13 @@ app.post('/api/quiz/grade', async (req, res) => {
   }
 });
 
+app.post('/api/circuit', async (req, res) => {
+  const code = String((req.body && req.body.code) || '');
+  const r = await latex.compileCircuit(code);
+  if (!r.ok) return res.status(r.code === 'BAD_CODE' ? 400 : 500).json({ error: r.error, code: r.code });
+  res.json({ png: r.png });
+});
+
 app.use((req, res, next) => {
   if (req.method === 'GET' && !req.path.startsWith('/api/')) {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -248,7 +314,7 @@ app.use((req, res, next) => {
 
 kb.ingestLegacyUploads();
 
-const port = config.port || 3000;
+const port = process.env.PORT || config.port || 3000;
 app.listen(port, () => {
   console.log(`VisBoard running at http://localhost:${port}`);
 });
