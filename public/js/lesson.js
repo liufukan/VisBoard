@@ -151,8 +151,8 @@ async function katexInlineCSS() {
   return css;
 }
 
-export function buildLessonHTML(topic, katexCss = '', circuits = null, imagesSrc = null) {
-  const rec = getLesson(topic);
+export function buildLessonHTML(topic, katexCss = '', circuits = null, imagesSrc = null, recOverride = null) {
+  const rec = recOverride || getLesson(topic);
   if (!rec) return null;
   const t = rec.topic;
   const board = rec.board, notes = rec.notes;
@@ -199,19 +199,18 @@ ${katexCss ? `<style>${katexCss}</style>` : ''}
 </html>`;
 }
 
-export async function exportLessonHTML(topic) {
-  const t = String(topic || '').trim();
-  if (!t) return false;
-  const rec = getLesson(t);
+// Inline circuit PNGs + KB images as data URLs so the exported file is fully
+// self-contained. Shared by live-lesson export and history-snapshot export.
+async function inlineBoardAssets(board) {
   const circuits = {};
-  if (rec && rec.board && rec.board.full) {
-    const codes = [...new Set(parseBlocks(cleanFull(rec.board.full)).filter(b => b.type === 'circuit').map(b => b.code))];
+  if (board && board.full) {
+    const codes = [...new Set(parseBlocks(cleanFull(board.full)).filter(b => b.type === 'circuit').map(b => b.code))];
     await Promise.all(codes.map(async code => {
       try { circuits[code] = await fetchCircuitPNG(code); } catch { circuits[code] = null; }
     }));
   }
   const imagesSrc = {};
-  const imgs = (rec && rec.board && rec.board.images) || [];
+  const imgs = (board && board.images) || [];
   await Promise.all(imgs.map(async img => {
     try {
       const r = await fetch(img.url);
@@ -223,8 +222,13 @@ export async function exportLessonHTML(topic) {
       imagesSrc[img.url] = 'data:' + mime + ';base64,' + btoa(bin);
     } catch { /* 省略该图，保持其余自包含 */ }
   }));
+  return { circuits, imagesSrc };
+}
+
+async function exportRec(t, rec) {
+  const { circuits, imagesSrc } = await inlineBoardAssets(rec.board);
   const katexCss = await katexInlineCSS().catch(() => '');
-  const html = buildLessonHTML(t, katexCss, circuits, imagesSrc);
+  const html = buildLessonHTML(t, katexCss, circuits, imagesSrc, rec);
   if (!html) return false;
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const a = document.createElement('a');
@@ -233,4 +237,19 @@ export async function exportLessonHTML(topic) {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   return true;
+}
+
+export async function exportLessonHTML(topic) {
+  const t = String(topic || '').trim();
+  if (!t) return false;
+  const rec = getLesson(t);
+  if (!rec) return false;
+  return exportRec(t, rec);
+}
+
+// Export a history snapshot (board from the backend archive, not localStorage).
+export async function exportSnapshotHTML(topic, board, notes = null, savedAt = null) {
+  const t = String(topic || '').trim();
+  if (!t || !board) return false;
+  return exportRec(t, { topic: t, board, notes, updatedAt: savedAt || Date.now() });
 }

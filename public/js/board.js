@@ -1,74 +1,15 @@
-import { $, esc, toast, parseBlocks, mdToHtml, blockHtml, webCitesHTML, resolveCircuitFrames, imageFigureHTML } from './util.js';
+import { $, esc, toast, postJSON, mdToHtml, blockHtml, webCitesHTML, resolveCircuitFrames, imageFigureHTML } from './util.js';
+import { GEO, MODE_LABEL, splitBlocks, makeCardEl, makeWebEl, webHTML, makeDialogEl, layoutScene, createView } from './wb-scene.js';
 import { subjectSelectHTML, initSubjectSelect, getSubject } from './subject.js';
 import { webToggleHTML, initWebToggle, getWeb } from './web.js';
 import { saveBoard, exportLessonHTML, getPlan } from './lesson.js';
 
-const COL_X = [40, 620], COL_W = 540, GAP_Y = 32, CONTENT_W = 1200;
-const DIALOG_INDENT = 28, DIALOG_GAP = 18;
-const GUTTER_X = (COL_X[0] + COL_W + COL_X[1]) / 2;
-const MODE_LABEL = { ask: '提问', explain: '解释一下', simpler: '再简单点', example: '举个例子' };
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 // Navigation guard: true while a lesson (or drill answer) is still generating, so
 // the router can confirm before aborting the stream and wiping the board.
 let leaveGuard = null;
 export function isLessonActive() { return leaveGuard ? leaveGuard() : false; }
-
-const FLOW_DEF = '<defs><marker id="ah-flow" markerWidth="9" markerHeight="9" refX="6.5" refY="3.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M0.5,0.5 L7,3.5 L0.5,6.5" fill="none" stroke="#4d9fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>';
-const DRILL_DEF = '<defs><marker id="ah-drill" markerWidth="11" markerHeight="11" refX="7.5" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0.5,0.5 L8.5,4 L0.5,7.5" fill="none" stroke="#ffb454" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>';
-
-function cardRect(c) {
-  const l = parseFloat(c.style.left) || 0, t = parseFloat(c.style.top) || 0;
-  return { l, t, w: c.offsetWidth, h: c.offsetHeight, r: l + c.offsetWidth, b: t + c.offsetHeight };
-}
-// Anchor on the edges that face each other and bow the curve through the empty
-// gutter between cards, so the connector stays fully visible instead of ducking
-// under neighbouring cards. Picks right/left edges for side-by-side cards and
-// top/bottom edges for stacked ones. When a stacked pair has a dialogue (or other
-// card) sitting between them, the vertical run detours out through the central
-// gutter — a column no card or dialogue ever occupies — so it never slices a box.
-function flowPath(a, b, obstacles) {
-  const A = cardRect(a), B = cardRect(b);
-  const acy = A.t + A.h / 2, bcx = B.l + B.w / 2, bcy = B.t + B.h / 2;
-  const m = 14;
-  const blockedBetween = (sx, top, bottom) => obstacles.some(o =>
-    o.r > sx - 2 && o.l < sx + 2 && o.b > top + 2 && o.t < bottom - 2);
-  const bow = (top, bottom, fromLeft) => {
-    const ax = fromLeft ? A.l + m : A.r - m, bx = fromLeft ? B.l + m : B.r - m;
-    const dy = Math.max(30, (bottom - top) * 0.25);
-    return `M${ax},${top} C${GUTTER_X},${top + dy} ${GUTTER_X},${bottom - dy} ${bx},${bottom}`;
-  };
-  let sx, sy, ex, ey, c1x, c1y, c2x, c2y;
-  if (B.l >= A.r - 1) {
-    sx = A.r; sy = clamp(bcy, A.t + m, A.b - m); ex = B.l; ey = clamp(acy, B.t + m, B.b - m);
-    const dx = Math.max(22, (ex - sx) * 0.5);
-    c1x = sx + dx; c1y = sy; c2x = ex - dx; c2y = ey;
-  } else if (B.r <= A.l + 1) {
-    sx = A.l; sy = clamp(bcy, A.t + m, A.b - m); ex = B.r; ey = clamp(acy, B.t + m, B.b - m);
-    const dx = Math.max(22, (sx - ex) * 0.5);
-    c1x = sx - dx; c1y = sy; c2x = ex + dx; c2y = ey;
-  } else if (B.t >= A.b - 1) {
-    sx = clamp(bcx, A.l + m, A.r - m); sy = A.b; ex = bcx; ey = B.t;
-    if (blockedBetween(sx, sy, ey)) return bow(sy, ey, (A.l + A.r) / 2 > GUTTER_X);
-    const dy = Math.max(14, (ey - sy) * 0.5);
-    c1x = sx; c1y = sy + dy; c2x = ex; c2y = ey - dy;
-  } else {
-    sx = clamp(bcx, A.l + m, A.r - m); sy = A.t; ex = bcx; ey = B.b;
-    if (blockedBetween(sx, ey, sy)) return bow(ey, sy, (A.l + A.r) / 2 > GUTTER_X);
-    const dy = Math.max(14, (sy - ey) * 0.5);
-    c1x = sx; c1y = sy - dy; c2x = ex; c2y = ey + dy;
-  }
-  return `M${sx},${sy} C${c1x},${c1y} ${c2x},${c2y} ${ex},${ey}`;
-}
-// Short vertical connector from a card (or the previous dialogue) straight down
-// to the dialogue spawned beneath it — stays in the empty gap, never hidden.
-function drillPath(prevEl, d) {
-  const P = cardRect(prevEl);
-  const dcx = d.x + d.el.offsetWidth / 2;
-  const sx = clamp(dcx, P.l + 14, P.r - 14), sy = P.b, ex = dcx, ey = d.y;
-  const dy = Math.max(12, (ey - sy) * 0.5);
-  return `M${sx},${sy} C${sx},${sy + dy} ${ex},${ey - dy} ${ex},${ey}`;
-}
 
 async function readSSE(r, handle) {
   const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '';
@@ -139,13 +80,13 @@ export function mount(view) {
   const input = $('#topicInput'), startBtn = $('#startBtn'), statusEl = $('#boardStatus'), reviewBtn = $('#reviewBtn'), exportBtn = $('#exportBtn');
   initSubjectSelect($('#subjSelect'));
   initWebToggle($('#webToggle'));
-  let vw = { x: 40, y: 30, scale: 0.85 };
-  let autoFollow = true, streaming = false, full = '', topic = '', cards = [], dialogs = [];
-  let bounds = { w: CONTENT_W, h: 900 }, lessonMaxY = 0;
+  const scene = createView(canvas, vp, { zval: $('#zval') });
+  let autoFollow = true, streaming = false, full = '', topic = '', cards = [], dialogs = [], webEls = [];
   let controller = null, renderPending = false, scenePending = false, lastCount = 0, dialogSeq = 0;
   let selectedCard = null;
   let lastCites = [], lastWebCites = [];
   let lessonImages = [];
+  let sessionId = null, histTimer = null, histWarned = false;
   leaveGuard = () => streaming || dialogs.some(d => d.streaming);
 
   function snapshotDialogs() {
@@ -153,138 +94,55 @@ export function mount(view) {
   }
   function persistBoard() {
     if (!topic || !full.trim()) return;
-    saveBoard(topic, { full, citations: lastCites, webCitations: lastWebCites, dialogs: snapshotDialogs(), images: lessonImages });
+    const board = { full, citations: lastCites, webCitations: lastWebCites, dialogs: snapshotDialogs(), images: lessonImages };
+    saveBoard(topic, board);
+    // Debounced archive to the backend history dir; snapshot captured now so a
+    // later clear/new-lesson cannot mutate what this pending save writes.
+    const snap = { id: sessionId, topic, board };
+    if (histTimer) clearTimeout(histTimer);
+    histTimer = setTimeout(() => {
+      histTimer = null;
+      postJSON('/api/history/save', snap).catch(() => {
+        if (!histWarned) { histWarned = true; toast('历史自动保存失败（不影响本课）', 'warn'); }
+      });
+    }, 600);
   }
 
-  function applyView(smooth) {
-    canvas.classList.toggle('smooth', !!smooth);
-    canvas.style.transform = `translate(${vw.x}px, ${vw.y}px) scale(${vw.scale})`;
-    $('#zval').textContent = Math.round(vw.scale * 100) + '%';
-  }
-  function zoomAt(mx, my, factor) {
-    const ns = clamp(vw.scale * factor, 0.25, 2.5), k = ns / vw.scale;
-    vw.x = mx - (mx - vw.x) * k; vw.y = my - (my - vw.y) * k; vw.scale = ns;
-    applyView(false);
-  }
-  function fitView(smooth = true) {
-    const r = vp.getBoundingClientRect(), pad = 60;
-    const s = clamp(Math.min((r.width - pad * 2) / bounds.w, (r.height - pad * 2) / bounds.h), 0.25, 1.2);
-    vw.scale = s; vw.x = (r.width - bounds.w * s) / 2; vw.y = Math.max(30, (r.height - bounds.h * s) / 2);
-    applyView(smooth);
-  }
   function followLast() {
     const card = cards[cards.length - 1]; if (!card) return;
-    const r = vp.getBoundingClientRect();
+    const r = vp.getBoundingClientRect(), vw = scene.vw;
     const cx = parseFloat(card.style.left) + card.offsetWidth / 2;
     const cy = parseFloat(card.style.top) + card.offsetHeight / 2;
     const sx = cx * vw.scale + vw.x, sy = cy * vw.scale + vw.y;
     if (sx < 100 || sx > r.width - 100 || sy < 100 || sy > r.height - 100) {
-      vw.x = r.width * 0.5 - cx * vw.scale; vw.y = r.height * 0.55 - cy * vw.scale;
-      applyView(true);
+      scene.panTo(r.width * 0.5 - cx * vw.scale, r.height * 0.55 - cy * vw.scale, true);
     }
   }
-  function focusDialog(d) {
-    const r = vp.getBoundingClientRect();
-    const s = clamp(Math.max(vw.scale, 0.85), 0.25, 2.5);
-    const w = d.el.offsetWidth || COL_W;
-    vw.scale = s;
-    vw.x = r.width * 0.5 - (d.x + w / 2) * s;
-    vw.y = r.height * 0.42 - (d.y + 60) * s;
-    applyView(true);
-  }
-
-  function drawLinks() {
-    const cardRects = cards.map(cardRect);
-    const dlgRects = dialogs.filter(d => d.el.isConnected).map(d => cardRect(d.el));
-    const flow = [];
-    for (let i = 0; i < cards.length - 1; i++) {
-      const obstacles = cardRects.filter((_, j) => j !== i && j !== i + 1).concat(dlgRects);
-      flow.push(`<path class="lk-flow" d="${flowPath(cards[i], cards[i + 1], obstacles)}" marker-end="url(#ah-flow)"/>`);
-    }
-    const drill = [];
-    const bySource = new Map();
-    dialogs.forEach(d => { if (!bySource.has(d.source)) bySource.set(d.source, []); bySource.get(d.source).push(d); });
-    bySource.forEach((ds, src) => {
-      if (!src || !src.isConnected) return;
-      let prev = src;
-      ds.forEach(d => { drill.push(`<path class="lk-drill" d="${drillPath(prev, d)}" marker-end="url(#ah-drill)"/>`); prev = d.el; });
-    });
-    links.setAttribute('width', bounds.w);
-    links.setAttribute('height', bounds.h);
-    links.setAttribute('viewBox', `0 0 ${bounds.w} ${bounds.h}`);
-    links.innerHTML = FLOW_DEF + DRILL_DEF + flow.join('') + drill.join('');
-  }
+  function focusDialog(d) { scene.focusEl(d.el, { minScale: 0.85, cy: 0.42, oy: 60 }); }
 
   function updateScene() { layout(); }
 
   function layout() {
-    const colH = [40, 40]; let maxY = 0;
-    const bySource = new Map();
-    dialogs.forEach(d => { if (!bySource.has(d.source)) bySource.set(d.source, []); bySource.get(d.source).push(d); });
-    const placeDialogs = (card, col) => {
-      const ds = bySource.get(card); if (!ds) return;
-      ds.forEach(d => {
-        d.x = COL_X[col] + DIALOG_INDENT; d.y = colH[col];
-        d.el.style.left = d.x + 'px'; d.el.style.width = (COL_W - DIALOG_INDENT) + 'px'; d.el.style.top = d.y + 'px';
-        colH[col] += d.el.offsetHeight + DIALOG_GAP;
-        maxY = Math.max(maxY, d.y + d.el.offsetHeight);
-      });
-    };
-    cards.forEach(card => {
-      const type = card.dataset.type;
-      if (type === 'title') {
-        card.style.left = '40px'; card.style.width = '1120px';
-        card.style.top = Math.max(colH[0], colH[1]) + 'px';
-        const ny = parseFloat(card.style.top) + card.offsetHeight + 36;
-        colH[0] = colH[1] = ny;
-        maxY = Math.max(maxY, parseFloat(card.style.top) + card.offsetHeight);
-        placeDialogs(card, 0);
-      } else {
-        const c = colH[0] <= colH[1] ? 0 : 1;
-        card.style.left = COL_X[c] + 'px'; card.style.width = COL_W + 'px';
-        card.style.top = colH[c] + 'px';
-        colH[c] += card.offsetHeight + GAP_Y;
-        maxY = Math.max(maxY, parseFloat(card.style.top) + card.offsetHeight);
-        placeDialogs(card, c);
-      }
-    });
-    lessonMaxY = maxY;
-    bounds = { w: CONTENT_W, h: Math.max(900, maxY + 80) };
-    canvas.style.width = bounds.w + 'px';
-    canvas.style.height = bounds.h + 'px';
-    drawLinks();
-  }
-
-  function cleanFull(s) {
-    const lines = String(s).split('\n');
-    if (lines.length && /^`{1,3}[a-z]*$/.test(lines[lines.length - 1].trim())) lines.pop();
-    return lines.join('\n');
+    const b = layoutScene({ cards, dialogs, web: webEls, canvas, links });
+    scene.setBounds(b);
   }
 
   const circuitCache = {};
   function renderBoard(text) {
-    const parsed = parseBlocks(cleanFull(text));
-    if (parsed.length && parsed[0].type === 'title') parsed.shift();
-    const blocks = topic ? [{ type: 'title', text: topic, isTopic: true }, ...parsed] : parsed;
-    blocks.forEach((b, i) => {
+    const { main, web } = splitBlocks(text);
+    const mainBlocks = topic ? [{ type: 'title', text: topic, isTopic: true }, ...main] : main;
+    mainBlocks.forEach((b, i) => {
       let card = cards[i];
-      if (!card) {
-        card = document.createElement('div');
-        card.className = 'wb-el ' + (b.type === 'title' ? (b.isTopic ? 'wb-title wb-topic' : 'wb-title') : (b.type === 'figure' || b.type === 'circuit' || b.type === 'func') ? 'wb-card wb-figure' : 'wb-card wb-text');
-        card.dataset.type = b.type;
-        canvas.appendChild(card); cards[i] = card;
-      }
+      if (card && card.dataset.type !== b.type) { card.remove(); card = null; }
+      if (!card) { card = makeCardEl(b, circuitCache); canvas.appendChild(card); cards[i] = card; return; }
       const html = blockHtml(b, circuitCache);
       if (card.dataset.sig !== html) { card.innerHTML = html; card.dataset.sig = html; }
     });
-    const total = blocks.length + lessonImages.length;
+    const total = mainBlocks.length + lessonImages.length;
     lessonImages.forEach((img, k) => {
-      const i = blocks.length + k;
+      const i = mainBlocks.length + k;
       let card = cards[i];
-      if (!card) {
-        card = document.createElement('div');
-        canvas.appendChild(card); cards[i] = card;
-      }
+      if (!card) { card = document.createElement('div'); canvas.appendChild(card); cards[i] = card; }
       card.className = 'wb-el wb-card wb-figure';
       card.dataset.type = 'image';
       const html = imageFigureHTML(img, img.url);
@@ -302,6 +160,17 @@ export function mount(view) {
       }
     });
     while (cards.length > total) cards.pop().remove();
+
+    web.forEach((b, k) => {
+      const source = cards[cards.length - 1] || cards[0] || null;
+      let w = webEls[k];
+      if (!w) { const el = makeWebEl(b, lastWebCites); canvas.appendChild(el); w = { el, source }; webEls[k] = w; return; }
+      w.source = source;
+      const html = webHTML(b, lastWebCites);
+      if (w.el.dataset.sig !== html) { w.el.innerHTML = html; w.el.dataset.sig = html; }
+    });
+    while (webEls.length > web.length) webEls.pop().el.remove();
+
     resolveCircuitFrames(canvas, circuitCache).then(() => layout());
     if (dialogs.length) {
       const keep = dialogs.filter(d => cards.includes(d.source));
@@ -358,23 +227,11 @@ export function mount(view) {
   function closeMenu() { menu.hidden = true; if (selectedCard) selectedCard.classList.remove('selected'); selectedCard = null; }
 
   function createDialog(source, mode, context) {
-    const el = document.createElement('div');
-    el.className = 'wb-dialog';
-    const snippet = context.slice(0, 40);
-    el.innerHTML = `
-      <div class="dlg-head">
-        <span class="dlg-badge ${mode}">${esc(MODE_LABEL[mode])}</span>
-        <span class="dlg-src" title="${esc(context)}">关于：${esc(snippet)}${context.length > 40 ? '…' : ''}</span>
-        <button class="dlg-close" title="关闭对话">×</button>
-      </div>
-      <div class="dlg-thread"></div>
-      <div class="dlg-input">
-        <input type="text" placeholder="继续追问…" autocomplete="off">
-        <button class="dlg-send" title="发送"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 19V5M6 11l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-      </div>`;
+    const d = { id: ++dialogSeq, el: null, source, context, mode, history: [], controller: null, streaming: false, x: 0, y: 0 };
+    const el = makeDialogEl(d, { readOnly: false });
+    d.el = el;
+    el.style.width = GEO.SIDE_W + 'px';
     canvas.appendChild(el);
-    const d = { id: ++dialogSeq, el, source, context, mode, history: [], controller: null, streaming: false, x: 0, y: 0 };
-    el.style.width = (COL_W - DIALOG_INDENT) + 'px';
     dialogs.push(d);
     el.querySelector('.dlg-close').addEventListener('click', () => removeDialog(d));
     const inp = el.querySelector('.dlg-input input');
@@ -476,10 +333,12 @@ export function mount(view) {
     if (controller) controller.abort();
     clearDialogs(); closeMenu();
     topic = t; full = ''; cards.forEach(c => c.remove()); cards = []; lastCount = 0;
+    webEls.forEach(w => w.el.remove()); webEls = [];
     lastCites = []; lastWebCites = []; lessonImages = [];
+    sessionId = crypto.randomUUID(); histWarned = false;
     $('#boardCites').innerHTML = ''; emptyEl.style.display = 'none'; reviewBtn.hidden = true; exportBtn.hidden = true;
     streaming = true; startBtn.disabled = true; setStatus('连接中…', true);
-    vw = { x: 40, y: 30, scale: 0.85 }; applyView(false);
+    scene.reset(false);
     renderBoard('');
     controller = new AbortController();
     const handle = ev => {
@@ -490,14 +349,14 @@ export function mount(view) {
       else if (ev.type === 'done') {
         if (ev.full) full = ev.full;
         lessonImages = ev.images || [];
+        lastCites = ev.citations || []; lastWebCites = ev.webCitations || [];
         streaming = false; renderBoard(full);
         setStatus('讲解完成 ✓', false);
-        lastCites = ev.citations || []; lastWebCites = ev.webCitations || [];
         $('#boardCites').innerHTML = lastCites.map(c => '<span class="chip blue">' + esc(c) + '</span>').join(' ') + ' ' + webCitesHTML(lastWebCites);
         persistBoard();
         exportBtn.hidden = false;
         reviewBtn.href = '/review?topic=' + encodeURIComponent(topic); reviewBtn.hidden = false;
-        fitView(true);
+        scene.fitView(true);
       } else if (ev.type === 'error') {
         streaming = false; setStatus('出错：' + ev.message, false); toast(ev.message, 'err');
         if (ev.code === 'NO_KEY') showEmpty('需要先配置 API 密钥', ev.message, 'NO_KEY');
@@ -513,33 +372,34 @@ export function mount(view) {
 
   // navigation: pan + click-to-select
   let dragging = false, didPan = false, sx = 0, sy = 0, ox = 0, oy = 0;
-  vp.addEventListener('pointerdown', e => { closeMenu(); dragging = true; didPan = false; vp.classList.add('grabbing'); vp.setPointerCapture(e.pointerId); sx = e.clientX; sy = e.clientY; ox = vw.x; oy = vw.y; canvas.classList.remove('smooth'); });
-  vp.addEventListener('pointermove', e => { if (!dragging) return; const dx = e.clientX - sx, dy = e.clientY - sy; if (Math.abs(dx) + Math.abs(dy) > 4) didPan = true; vw.x = ox + dx; vw.y = oy + dy; applyView(false); });
+  vp.addEventListener('pointerdown', e => { closeMenu(); window.getSelection().removeAllRanges(); dragging = true; didPan = false; vp.classList.add('grabbing'); vp.setPointerCapture(e.pointerId); sx = e.clientX; sy = e.clientY; ox = scene.vw.x; oy = scene.vw.y; canvas.classList.remove('smooth'); });
+  vp.addEventListener('dragstart', e => e.preventDefault());
+  vp.addEventListener('pointermove', e => { if (!dragging) return; const dx = e.clientX - sx, dy = e.clientY - sy; if (Math.abs(dx) + Math.abs(dy) > 4) didPan = true; scene.panTo(ox + dx, oy + dy, false); });
   const endDrag = () => { dragging = false; vp.classList.remove('grabbing'); };
   vp.addEventListener('pointerup', e => {
     const wasPan = didPan; endDrag();
     if (wasPan) return;
     const t = document.elementFromPoint(e.clientX, e.clientY);
     const card = t && t.closest ? t.closest('.wb-el') : null;
-    if (card && canvas.contains(card)) openMenu(card);
+    if (card && canvas.contains(card) && !card.classList.contains('wb-web')) openMenu(card);
     else closeMenu();
   });
   vp.addEventListener('pointercancel', endDrag);
-  vp.addEventListener('wheel', e => { e.preventDefault(); closeMenu(); const r = vp.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 0.89); }, { passive: false });
+  vp.addEventListener('wheel', e => { e.preventDefault(); closeMenu(); const r = vp.getBoundingClientRect(); scene.zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 0.89); }, { passive: false });
 
-  $('#zoomIn').addEventListener('click', () => { closeMenu(); const r = vp.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 1.18); });
-  $('#zoomOut').addEventListener('click', () => { closeMenu(); const r = vp.getBoundingClientRect(); zoomAt(r.width / 2, r.height / 2, 0.85); });
-  $('#zoomFit').addEventListener('click', () => { closeMenu(); fitView(true); });
-  $('#zoomReset').addEventListener('click', () => { closeMenu(); vw = { x: 40, y: 30, scale: 0.85 }; applyView(true); });
+  $('#zoomIn').addEventListener('click', () => { closeMenu(); const r = vp.getBoundingClientRect(); scene.zoomAt(r.width / 2, r.height / 2, 1.18); });
+  $('#zoomOut').addEventListener('click', () => { closeMenu(); const r = vp.getBoundingClientRect(); scene.zoomAt(r.width / 2, r.height / 2, 0.85); });
+  $('#zoomFit').addEventListener('click', () => { closeMenu(); scene.fitView(true); });
+  $('#zoomReset').addEventListener('click', () => { closeMenu(); scene.reset(true); });
   $('#followBtn').addEventListener('click', () => { autoFollow = !autoFollow; $('#followBtn').classList.toggle('on', autoFollow); $('#followBtn span').textContent = autoFollow ? '自动跟随' : '自由浏览'; });
-  $('#clearBtn').addEventListener('click', () => { if (controller) controller.abort(); streaming = false; full = ''; topic = ''; lessonMaxY = 0; lastCites = []; lastWebCites = []; lessonImages = []; cards.forEach(c => c.remove()); cards = []; clearDialogs(); closeMenu(); lastCount = 0; updateScene(); $('#boardCites').innerHTML = ''; reviewBtn.hidden = true; exportBtn.hidden = true; showEmpty('一块等待开课的白板', '输入课题并点击「开始讲解」，AI 会在这里逐个插入文字框和示意图', null); setStatus('', false); startBtn.disabled = false; });
+  $('#clearBtn').addEventListener('click', () => { if (controller) controller.abort(); streaming = false; full = ''; topic = ''; lastCites = []; lastWebCites = []; lessonImages = []; cards.forEach(c => c.remove()); cards = []; webEls.forEach(w => w.el.remove()); webEls = []; clearDialogs(); closeMenu(); lastCount = 0; updateScene(); $('#boardCites').innerHTML = ''; reviewBtn.hidden = true; exportBtn.hidden = true; showEmpty('一块等待开课的白板', '输入课题并点击「开始讲解」，AI 会在这里逐个插入文字框和示意图', null); setStatus('', false); startBtn.disabled = false; });
   exportBtn.addEventListener('click', async () => { if (await exportLessonHTML(topic)) toast('已导出本课 HTML（含白板/追问/笔记）', 'ok'); else toast('没有可导出的本课内容', 'warn'); });
   startBtn.addEventListener('click', start);
   input.addEventListener('keydown', e => { if (e.key === 'Enter') start(); });
 
-  const onResize = () => applyView(false);
+  const onResize = () => scene.applyView(false);
   window.addEventListener('resize', onResize);
-  applyView(false);
+  scene.applyView(false);
 
   const qTopic = new URLSearchParams(location.search).get('topic');
   if (qTopic) { input.value = qTopic; start(); }

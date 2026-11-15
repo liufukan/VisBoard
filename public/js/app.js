@@ -3,6 +3,7 @@ import * as kb from './kb.js';
 import * as prepare from './prepare.js';
 import * as board from './board.js';
 import * as review from './review.js';
+import * as historyPage from './history.js';
 import * as settings from './settings.js';
 
 const routes = {
@@ -11,6 +12,7 @@ const routes = {
   '/prepare': { page: 'prepare', title: 'AI 备课', mount: prepare.mount },
   '/board': { page: 'board', title: '白板讲解', mount: board.mount },
   '/review': { page: 'review', title: '笔记小测', mount: review.mount },
+  '/history': { page: 'history', title: '历史记录', mount: historyPage.mount },
   '/settings': { page: 'settings', title: '设置', mount: settings.mount },
 };
 
@@ -84,7 +86,7 @@ function mountHome(view) {
     <section class="hero">
       <span class="eyebrow">AI Whiteboard Tutor</span>
       <h1>把你的课件，变成<br><span class="grad">一块会讲课的白板</span></h1>
-      <p>上传 PDF / Word / PPT / Markdown 搭建专属知识库，AI 只依据你的资料，在白板上边插入文字框和示意图边讲解——不联网、不瞎编，像 ahaboard 一样把知识讲透。</p>
+      <p>上传 PDF / Word / PPT / Markdown 搭建专属知识库，AI 只依据你的资料，在白板上边插入文字框和示意图边讲解——不联网、不瞎编，把知识讲透。</p>
       <div class="hero-actions">
         <a class="btn" href="/board" data-route>开始白板讲解
           <svg viewBox="0 0 24 24" width="18" height="18"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>

@@ -11,6 +11,9 @@ uploads/*
 !uploads/.gitkeep
 subjects.json
 
+# ---- Lecture history snapshots (local private data) ----
+history/
+
 # ---- Dev scratch / local test fixtures ----
 test/
 ocr-data/

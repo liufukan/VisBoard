@@ -12,6 +12,7 @@ const llm = require('./lib/llm');
 const search = require('./lib/search');
 const latex = require('./lib/latex');
 const ocr = require('./lib/ocr');
+const history = require('./lib/history');
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 // config.json is gitignored (local keys); create an empty template on first run so a fresh clone boots.
@@ -58,7 +59,7 @@ const upload = multer({
     destination: path.join(__dirname, 'uploads'),
     filename: (req, file, cb) => cb(null, crypto.randomUUID() + path.extname(file.originalname).toLowerCase()),
   }),
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: { fileSize: 200 * 1024 * 1024 },
   // busboy defaults to latin1; decode multipart filenames/fields as UTF-8 so Chinese names survive.
   defParamCharset: 'utf8',
 });
@@ -149,6 +150,24 @@ app.post('/api/subjects', (req, res) => {
 
 app.delete('/api/subjects/:id', (req, res) => {
   res.json({ ok: kb.deleteSubject(req.params.id) });
+});
+
+app.post('/api/history/save', (req, res) => {
+  const b = req.body || {};
+  const r = history.save({ id: b.id, topic: b.topic, board: b.board });
+  res.json({ ok: true, id: r.id });
+});
+
+app.get('/api/history/list', (req, res) => res.json({ records: history.list() }));
+
+app.get('/api/history/:id', (req, res) => {
+  const r = history.get(req.params.id);
+  if (!r) return res.status(404).json({ error: '记录不存在' });
+  res.json(r);
+});
+
+app.delete('/api/history/:id', (req, res) => {
+  res.json({ ok: history.remove(req.params.id) });
 });
 
 app.post('/api/retrieve', async (req, res) => {
@@ -310,6 +329,16 @@ app.use((req, res, next) => {
   if (req.method === 'GET' && !req.path.startsWith('/api/')) {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
   } else next();
+});
+
+// Multer/route errors must stay JSON: the frontend parses every /api response,
+// and Express's default HTML error page surfaces as "Unexpected token '<'".
+app.use((err, req, res, next) => {
+  const tooBig = err && err.code === 'LIMIT_FILE_SIZE';
+  const msg = tooBig ? '单个文件超过 200MB 上限'
+    : err && err.name === 'MulterError' ? '上传失败:' + err.message
+    : (err && err.message) || '服务器内部错误';
+  res.status(tooBig ? 413 : 500).json({ error: msg });
 });
 
 kb.ingestLegacyUploads();
