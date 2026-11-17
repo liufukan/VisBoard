@@ -304,6 +304,8 @@ input::placeholder { color: var(--faint); }
 .up-item.err .st { background: rgba(255, 107, 107, .15); color: var(--red); }
 .up-item .nm { font-weight: 600; word-break: break-all; }
 .up-item .ds { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.up-item.run .st { background: rgba(77, 159, 255, .15); color: var(--primary); animation: spin 1.2s linear infinite; }
+.up-item.queue .st { background: rgba(148, 163, 184, .15); color: var(--muted); }
 
 .kb-toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
 .kb-toolbar input[type=search] { max-width: 280px; }

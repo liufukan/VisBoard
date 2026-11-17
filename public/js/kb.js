@@ -1,4 +1,5 @@
 import { $, esc, getJSON, postJSON, delJSON, toast, fmtDate, refreshConn, confirmModal } from './util.js';
+import * as jobs from './jobs.js';
 
 const ACCEPT = '.txt,.md,.pdf,.docx,.pptx,.png,.jpg,.jpeg';
 
@@ -125,7 +126,51 @@ export function mount(view) {
         ${d.scanned ? `<button class="btn ghost sm doc-ocr" data-id="${esc(d.id)}" title="本地 OCR 识别扫描文字，较慢">OCR 识别</button>` : ''}
         <button class="btn ghost sm doc-del" data-id="${esc(d.id)}">删除</button>
       </div>`).join('');
-    updateSelectAll(); syncBulk();
+    updateSelectAll(); syncBulk(); applyJobButtons(jobs.getJobs());
+  }
+
+  function renderUploadJobs(list) {
+    const box = $('#uploadResults');
+    const pj = list.filter(j => j.kind === 'parse').slice(0, 8);
+    if (!pj.length) { box.innerHTML = ''; return; }
+    box.innerHTML = pj.map(j => {
+      if (j.status === 'done' && j.result) {
+        const r = j.result;
+        return '<div class="up-item ok"><span class="st">✓</span><div><div class="nm">' + esc(j.name) + '</div><div class="ds">' + esc(r.kind) + ' · ' + r.chars + ' 字 · ' + r.pages + ' 页 · ' + r.chunks + ' 块</div></div></div>';
+      }
+      if (j.status === 'error') return '<div class="up-item err"><span class="st">✕</span><div><div class="nm">' + esc(j.name) + '</div><div class="ds">' + esc(j.error || '解析失败') + '</div></div></div>';
+      if (j.status === 'running') return '<div class="up-item run"><span class="st">⟳</span><div><div class="nm">' + esc(j.name) + '</div><div class="ds">' + esc(j.stage || '解析中') + '</div></div></div>';
+      return '<div class="up-item queue"><span class="st">…</span><div><div class="nm">' + esc(j.name) + '</div><div class="ds">排队中，等待前面的文件解析完</div></div></div>';
+    }).join('');
+  }
+
+  function applyJobButtons(list) {
+    const seen = new Set();
+    for (const j of list) {
+      if (j.kind !== 'images' && j.kind !== 'ocr') continue;
+      const key = j.kind + ':' + j.docId;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const btn = $('#docList').querySelector((j.kind === 'images' ? '.doc-img' : '.doc-ocr') + '[data-id="' + j.docId + '"]');
+      if (!btn) continue;
+      const active = j.status === 'queued' || j.status === 'running';
+      btn.disabled = active;
+      btn.textContent = j.kind === 'images'
+        ? (j.status === 'queued' ? '排队中' : j.status === 'running' ? '提取中' : '补提取图片')
+        : (j.status === 'queued' ? '排队中' : j.status === 'running' ? '识别中' : 'OCR 识别');
+    }
+  }
+
+  let prevJobs = [];
+  function onJobs(list) {
+    renderUploadJobs(list);
+    for (const j of list) {
+      const prev = prevJobs.find(p => p.id === j.id);
+      const wasActive = prev && (prev.status === 'queued' || prev.status === 'running');
+      if (wasActive && (j.status === 'done' || j.status === 'error')) { load(); refreshConn(); }
+    }
+    applyJobButtons(list);
+    prevJobs = list;
   }
 
   function updateSelectAll() {
@@ -162,6 +207,20 @@ export function mount(view) {
       if (!yes) return;
     }
     const target = kind === 'move' ? ($('#bulkSubject').value || null) : null;
+    if (kind === 'images') {
+      setBulkBusy(true);
+      let ok = 0, fail = 0;
+      for (const id of ids) {
+        try { await postJSON('/api/kb/' + encodeURIComponent(id) + '/images', {}); ok++; }
+        catch { fail++; }
+      }
+      setBulkBusy(false);
+      selected.clear();
+      renderList();
+      jobs.wake();
+      toast('已加入补提取图片队列:' + ok + ' 份' + (fail ? '，失败 ' + fail + ' 份' : '') + ',后台进行', fail ? 'warn' : 'ok');
+      return;
+    }
     setBulkBusy(true);
     let ok = 0, fail = 0;
     for (let i = 0; i < ids.length; i++) {
@@ -187,19 +246,14 @@ export function mount(view) {
     for (const f of files) fd.append('files', f);
     if (uploadSel.value) fd.append('subject', uploadSel.value);
     const box = $('#uploadResults');
-    box.innerHTML = '<div class="up-item"><span class="st">…</span><div><div class="nm">解析中</div><div class="ds">' + files.length + ' 个文件…</div></div></div>';
     try {
       const r = await fetch('/api/upload', { method: 'POST', body: fd });
       const ct = r.headers.get('content-type') || '';
       if (!ct.includes('application/json')) throw new Error('服务器返回异常(HTTP ' + r.status + '),请检查文件大小或稍后重试');
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || ('上传失败(HTTP ' + r.status + ')'));
-      box.innerHTML = (d.results || []).map(it => it.error
-        ? `<div class="up-item err"><span class="st">✕</span><div><div class="nm">${esc(it.name)}</div><div class="ds">${esc(it.error)}</div></div></div>`
-        : `<div class="up-item ok"><span class="st">✓</span><div><div class="nm">${esc(it.name)}</div><div class="ds">${it.kind} · ${it.chars} 字 · ${it.pages} 页 · ${it.chunks} 块</div></div></div>`).join('');
-      const ok = (d.results || []).filter(x => !x.error).length;
-      toast(ok ? '成功导入 ' + ok + ' 份资料' : '没有导入任何资料', ok ? 'ok' : 'warn');
-      load(); refreshConn();
+      jobs.wake();
+      toast('已加入解析队列:' + (d.jobs || []).length + ' 个文件,后台解析,可切换页面', 'ok');
     } catch (e) {
       box.innerHTML = '<div class="up-item err"><span class="st">✕</span><div><div class="nm">上传失败</div><div class="ds">' + esc(e.message) + '</div></div></div>';
       toast('上传失败:' + e.message, 'err');
@@ -270,22 +324,20 @@ export function mount(view) {
   $('#docList').addEventListener('click', async e => {
     const imgBtn = e.target.closest('.doc-img');
     if (imgBtn) {
-      imgBtn.disabled = true;
       try {
-        const r = await postJSON('/api/kb/' + encodeURIComponent(imgBtn.dataset.id) + '/images', {});
-        toast('已提取 ' + (r.count || 0) + ' 张图片', 'ok');
-        load();
-      } catch (err) { toast(err.message, 'err'); imgBtn.disabled = false; }
+        await postJSON('/api/kb/' + encodeURIComponent(imgBtn.dataset.id) + '/images', {});
+        imgBtn.disabled = true; imgBtn.textContent = '排队中';
+        jobs.wake();
+      } catch (err) { toast(err.message, 'err'); }
       return;
     }
     const ocrBtn = e.target.closest('.doc-ocr');
     if (ocrBtn) {
-      ocrBtn.disabled = true; const old = ocrBtn.textContent; ocrBtn.textContent = '识别中…';
       try {
-        const r = await postJSON('/api/kb/' + encodeURIComponent(ocrBtn.dataset.id) + '/ocr', {});
-        toast(r.ocrPages ? ('识别 ' + r.ocrPages + ' 页（' + r.chars + ' 字）' + (r.truncated ? '，已识别前 50 页' : '')) : '识别完成但结果为空（可能图质差）', r.ocrPages ? 'ok' : 'warn');
-        load();
-      } catch (err) { toast(err.message, 'err'); ocrBtn.disabled = false; ocrBtn.textContent = old; }
+        await postJSON('/api/kb/' + encodeURIComponent(ocrBtn.dataset.id) + '/ocr', {});
+        ocrBtn.disabled = true; ocrBtn.textContent = '排队中';
+        jobs.wake();
+      } catch (err) { toast(err.message, 'err'); }
       return;
     }
     const btn = e.target.closest('.doc-del');
@@ -299,5 +351,7 @@ export function mount(view) {
 
   loadSubjects();
   load();
-  return null;
+  const unJobs = jobs.subscribe(onJobs);
+  jobs.wake();
+  return () => { unJobs(); };
 }

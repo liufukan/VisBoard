@@ -3,7 +3,6 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const multer = require('multer');
-const { extract, SUPPORTED } = require('./lib/parse');
 const kb = require('./lib/kb');
 const { retrieve } = require('./lib/retrieve');
 const { prepareLesson, streamLesson, streamAnswer } = require('./lib/teach');
@@ -11,8 +10,8 @@ const { streamNotes, generateQuiz, gradeShortAnswers } = require('./lib/review')
 const llm = require('./lib/llm');
 const search = require('./lib/search');
 const latex = require('./lib/latex');
-const ocr = require('./lib/ocr');
 const history = require('./lib/history');
+const jobs = require('./lib/jobs');
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 // config.json is gitignored (local keys); create an empty template on first run so a fresh clone boots.
@@ -64,25 +63,20 @@ const upload = multer({
   defParamCharset: 'utf8',
 });
 
-app.post('/api/upload', upload.array('files'), async (req, res) => {
-  const results = [];
+app.post('/api/upload', upload.array('files'), (req, res) => {
   const subject = (req.body && req.body.subject) || null;
+  const queued = [];
   for (const f of req.files || []) {
     const ext = path.extname(f.filename).toLowerCase();
     const id = path.basename(f.filename, ext);
-    try {
-      const parsed = await extract(f.path);
-      const doc = kb.addDoc({ id, name: f.originalname, kind: parsed.kind, pages: parsed.pages, subject, images: parsed.images, scanned: parsed.scanned });
-      results.push({
-        id, name: f.originalname, kind: parsed.kind, chars: doc.chars, pages: doc.pages, chunks: doc.chunks.length,
-        preview: parsed.pages.map(p => p.text).join('\n').slice(0, 200),
-      });
-    } catch (e) {
-      results.push({ name: f.originalname, error: e.message });
-    }
+    // sidecar 保留原始文件名/科目:进程崩溃后启动找回时能恢复原名
+    fs.writeFileSync(path.join(__dirname, 'uploads', id + '.meta.json'), JSON.stringify({ name: f.originalname, subject }));
+    queued.push(jobs.enqueue('parse', { docId: id, name: f.originalname, subject, path: f.path }));
   }
-  res.json({ results });
+  res.json({ jobs: queued });
 });
+
+app.get('/api/jobs', (req, res) => res.json({ jobs: jobs.list() }));
 
 app.get('/api/kb', (req, res) => res.json({ docs: kb.listDocs() }));
 
@@ -95,10 +89,11 @@ app.post('/api/kb/:id/subject', (req, res) => {
   res.json({ ok: kb.setDocSubject(req.params.id, subject) });
 });
 
-app.post('/api/kb/:id/images', async (req, res) => {
+app.post('/api/kb/:id/images', (req, res) => {
   const id = req.params.id;
   if (!/^[a-zA-Z0-9-]+$/.test(id)) return res.status(400).json({ error: '无效的文档 ID' });
-  if (!kb.getDoc(id)) return res.status(404).json({ error: '文档不存在' });
+  const doc = kb.getDoc(id);
+  if (!doc) return res.status(404).json({ error: '文档不存在' });
   const upDir = path.join(__dirname, 'uploads');
   let src = null;
   if (fs.existsSync(upDir)) {
@@ -106,20 +101,14 @@ app.post('/api/kb/:id/images', async (req, res) => {
     if (match) src = path.join(upDir, match);
   }
   if (!src) return res.status(400).json({ error: '找不到原始上传文件，无法补提取图片' });
-  try {
-    const parsed = await extract(src);
-    const ok = kb.setDocImages(id, parsed.images || []);
-    const d = kb.getDoc(id);
-    res.json({ ok, count: (d.images || []).length });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  res.json({ job: jobs.enqueue('images', { docId: id, name: doc.name, path: src }) });
 });
 
-app.post('/api/kb/:id/ocr', async (req, res) => {
+app.post('/api/kb/:id/ocr', (req, res) => {
   const id = req.params.id;
   if (!/^[a-zA-Z0-9-]+$/.test(id)) return res.status(400).json({ error: '无效的文档 ID' });
-  if (!kb.getDoc(id)) return res.status(404).json({ error: '文档不存在' });
+  const doc = kb.getDoc(id);
+  if (!doc) return res.status(404).json({ error: '文档不存在' });
   const upDir = path.join(__dirname, 'uploads');
   let src = null;
   if (fs.existsSync(upDir)) {
@@ -127,15 +116,7 @@ app.post('/api/kb/:id/ocr', async (req, res) => {
     if (match) src = path.join(upDir, match);
   }
   if (!src) return res.status(400).json({ error: '找不到原始上传文件，无法 OCR' });
-  try {
-    const parsed = await extract(src);
-    if (parsed.kind !== 'pdf' && parsed.kind !== 'image') return res.status(400).json({ error: '该文档无需 OCR' });
-    const r = await ocr.ocrDoc(parsed);
-    const ok = kb.setDocText(id, r.pages, parsed.images);
-    res.json({ ok, ocrPages: r.ocrPages, chars: r.chars, truncated: r.truncated });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+  res.json({ job: jobs.enqueue('ocr', { docId: id, name: doc.name, path: src }) });
 });
 
 app.get('/api/subjects', (req, res) => res.json({ subjects: kb.listSubjects() }));
@@ -342,6 +323,7 @@ app.use((err, req, res, next) => {
 });
 
 kb.ingestLegacyUploads();
+jobs.recoverOrphans(path.join(__dirname, 'uploads'));
 
 const port = process.env.PORT || config.port || 3000;
 app.listen(port, () => {

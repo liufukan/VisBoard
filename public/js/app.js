@@ -5,6 +5,7 @@ import * as board from './board.js';
 import * as review from './review.js';
 import * as historyPage from './history.js';
 import * as settings from './settings.js';
+import * as jobs from './jobs.js';
 
 const routes = {
   '/': { page: 'home', title: '首页', mount: mountHome },
@@ -132,3 +133,4 @@ function mountHome(view) {
 
 refreshConn();
 render();
+jobs.wake();
