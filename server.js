@@ -63,17 +63,28 @@ const upload = multer({
   defParamCharset: 'utf8',
 });
 
-app.post('/api/upload', upload.array('files'), (req, res) => {
+app.post('/api/upload', upload.array('files'), async (req, res) => {
   const subject = (req.body && req.body.subject) || null;
-  const queued = [];
+  const queued = [], skipped = [];
   for (const f of req.files || []) {
     const ext = path.extname(f.filename).toLowerCase();
     const id = path.basename(f.filename, ext);
-    // sidecar 保留原始文件名/科目:进程崩溃后启动找回时能恢复原名
-    fs.writeFileSync(path.join(__dirname, 'uploads', id + '.meta.json'), JSON.stringify({ name: f.originalname, subject }));
-    queued.push(jobs.enqueue('parse', { docId: id, name: f.originalname, subject, path: f.path }));
+    // 内容哈希去重:与已入库文档或排队/解析中的任务同哈希则跳过,不再重复解析。
+    const hash = await kb.hashFile(f.path);
+    const dupDoc = kb.findByHash(hash);
+    const dupJob = jobs.list().find(j => (j.status === 'queued' || j.status === 'running') && j.hash === hash);
+    const dup = dupDoc || (dupJob && { id: dupJob.docId, name: dupJob.name });
+    if (dup) {
+      // 删掉临时上传文件与 sidecar,避免重启时被孤儿找回逻辑重新解析。
+      try { fs.unlinkSync(f.path); } catch {}
+      skipped.push({ name: f.originalname, existingId: dup.id, existingName: dup.name });
+      continue;
+    }
+    // sidecar 保留原始文件名/科目/哈希:进程崩溃后启动找回时能恢复原名与去重信息
+    fs.writeFileSync(path.join(__dirname, 'uploads', id + '.meta.json'), JSON.stringify({ name: f.originalname, subject, hash }));
+    queued.push(jobs.enqueue('parse', { docId: id, name: f.originalname, subject, hash, path: f.path }));
   }
-  res.json({ jobs: queued });
+  res.json({ jobs: queued, skipped });
 });
 
 app.get('/api/jobs', (req, res) => res.json({ jobs: jobs.list() }));
@@ -324,6 +335,8 @@ app.use((err, req, res, next) => {
 
 kb.ingestLegacyUploads();
 jobs.recoverOrphans(path.join(__dirname, 'uploads'));
+// 旧文档补算内容哈希(后台异步,不阻塞启动),使去重对既有资料也生效。
+kb.backfillHashes().then(n => { if (n) console.log('[kb] backfilled hashes for', n, 'docs'); }).catch(e => console.warn('[kb] backfill failed:', e.message));
 
 const port = process.env.PORT || config.port || 3000;
 app.listen(port, () => {

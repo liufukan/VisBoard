@@ -253,7 +253,14 @@ export function mount(view) {
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || ('上传失败(HTTP ' + r.status + ')'));
       jobs.wake();
-      toast('已加入解析队列:' + (d.jobs || []).length + ' 个文件,后台解析,可切换页面', 'ok');
+      const skipped = d.skipped || [];
+      const nq = (d.jobs || []).length;
+      if (skipped.length) {
+        const names = skipped.map(s => s.name).join('、');
+        toast('已存在,跳过解析:' + names + (nq ? '(其余 ' + nq + ' 个已入队)' : ''), 'warn');
+      }
+      if (nq) toast('已加入解析队列:' + nq + ' 个文件,后台解析,可切换页面', 'ok');
+      else if (!skipped.length) toast('没有可解析的文件', 'warn');
     } catch (e) {
       box.innerHTML = '<div class="up-item err"><span class="st">✕</span><div><div class="nm">上传失败</div><div class="ds">' + esc(e.message) + '</div></div></div>';
       toast('上传失败:' + e.message, 'err');
