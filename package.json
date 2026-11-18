@@ -1,6 +1,6 @@
 {
   "name": "visboard",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "private": true,
   "description": "个人知识库 AI 家教:上传资料搭建知识库,AI 依据知识库边画边讲、点不懂就深入、教到你会。",
   "main": "server.js",
