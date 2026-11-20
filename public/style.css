@@ -370,6 +370,12 @@ input::placeholder { color: var(--faint); }
 .lesson-sec ul { margin: 0; padding-left: 20px; }
 .lesson-sec li { font-size: 14px; line-height: 1.8; color: #cdd7e3; }
 .lesson-sec .src { display: inline-block; margin-top: 10px; font-size: 12px; color: var(--faint); }
+.lesson-sec .worked { margin-top: 12px; padding: 12px 14px; background: rgba(77, 159, 255, .05); border: 1px solid var(--line-soft); border-radius: 10px; }
+.lesson-sec .worked-head { font-size: 12px; font-weight: 700; letter-spacing: .06em; color: var(--primary); margin-bottom: 8px; }
+.lesson-sec .worked p, .lesson-sec .worked li { font-size: 14px; line-height: 1.8; color: #cdd7e3; margin: 0 0 8px; }
+.lesson-sec .worked p:last-child, .lesson-sec .worked li:last-child { margin-bottom: 0; }
+.lesson-sec .worked ul, .lesson-sec .worked ol { margin: 0 0 8px; padding-left: 20px; }
+.lesson-sec .worked .katex-display { margin: 10px 0; overflow-x: auto; overflow-y: hidden; }
 .lesson-cites { margin-top: 18px; }
 .lesson-head { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
 .lesson-head-main { flex: 1; min-width: 240px; }

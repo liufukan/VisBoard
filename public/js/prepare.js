@@ -1,4 +1,4 @@
-import { $, esc, postJSON, toast, guideLink, webCitesHTML } from './util.js';
+import { $, esc, postJSON, toast, guideLink, webCitesHTML, mdToHtml } from './util.js';
 import { subjectSelectHTML, initSubjectSelect, getSubject } from './subject.js';
 import { webToggleHTML, initWebToggle, getWeb } from './web.js';
 import { savePlan } from './lesson.js';
@@ -33,6 +33,7 @@ export function mount(view) {
           <div class="lesson-sec">
             <h4><span class="num">${i + 1}</span>${esc(s.heading)}</h4>
             <ul>${(s.points || []).map(p => '<li>' + esc(p) + '</li>').join('')}</ul>
+            ${s.worked ? '<div class="worked"><div class="worked-head">例题解析 · 已核对</div>' + mdToHtml(s.worked) + '</div>' : ''}
             ${s.source ? '<span class="src">来源：' + esc(s.source) + '</span>' : ''}
           </div>`).join('')}
         <div class="lesson-cites">
